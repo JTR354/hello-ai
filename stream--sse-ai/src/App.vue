@@ -4,60 +4,35 @@ import { ref } from 'vue';
 const question = ref('讲一个关于中国龙的故事');
 const content = ref('');
 const stream = ref(true);
-console.log(import.meta.env.VITE_DEEPSEEK_API_KEY, 9e9)
+
 const update = async () => {
   if(!question) return;
   content.value = "思考中...";
 
-  const endpoint = 'https://api.deepseek.com/chat/completions';
+  const endpoint = '/api/stream';
   const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_DEEPSEEK_API_KEY}`
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${import.meta.env.VITE_MOONSHOT_API_KEY}`
   };
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: headers,
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: [{ role: 'user', content: question.value }],
-      stream: stream.value,
-    })
-  });
 
   if(stream.value) {
     content.value = '';
-
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let done = false;
-    let buffer = '';
-
-    while (!done) {
-      const { value, done: doneReading } = await (reader?.read() as Promise<{ value: any; done: boolean }>);
-      done = doneReading;
-      const chunkValue = buffer + decoder.decode(value);
-      buffer = '';
-
-      const lines = chunkValue.split('\n').filter((line) => line.startsWith('data: '));
-
-      for (const line of lines) {
-        const incoming = line.slice(6);
-        console.log(incoming)
-        if(incoming === '[DONE]') {
-          done = true;
-          break;
-        }
-        try {
-          const data = JSON.parse(incoming);
-          const delta = data.choices[0].delta.content;
-          if(delta) content.value += delta;
-        } catch(ex) {
-          buffer += `data: ${incoming}`;
-        }
-      }
-    }
+    const eventSource = new EventSource(`${endpoint}?question=${question.value}`);
+    eventSource.addEventListener("message", function(e: any) {
+      console.log(e)
+      content.value += e.data;
+    });
+    eventSource.addEventListener('end', () => { eventSource.close();});
   } else {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        model: 'moonshot-v1-8k',
+        messages: [{ role: 'user', content: question.value }],
+        stream: stream.value,
+      })
+    });
     const data = await response.json();
     content.value = data.choices[0].message.content;
   }
