@@ -1,30 +1,102 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+import { ref } from 'vue';
+
+const question = ref('讲一个关于中国龙的故事');
+const content = ref('');
+const stream = ref(true);
+console.log(import.meta.env.VITE_DEEPSEEK_API_KEY, 9e9)
+const update = async () => {
+  if(!question) return;
+  content.value = "思考中...";
+
+  const endpoint = 'https://api.deepseek.com/chat/completions';
+  const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${import.meta.env.VITE_DEEPSEEK_API_KEY}`
+  };
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: question.value }],
+      stream: stream.value,
+    })
+  });
+
+  if(stream.value) {
+    content.value = '';
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+    let buffer = '';
+
+    while (!done) {
+      const { value, done: doneReading } = await (reader?.read() as Promise<{ value: any; done: boolean }>);
+      done = doneReading;
+      const chunkValue = buffer + decoder.decode(value);
+      buffer = '';
+
+      const lines = chunkValue.split('\n').filter((line) => line.startsWith('data: '));
+
+      for (const line of lines) {
+        const incoming = line.slice(6);
+        console.log(incoming)
+        if(incoming === '[DONE]') {
+          done = true;
+          break;
+        }
+        try {
+          const data = JSON.parse(incoming);
+          const delta = data.choices[0].delta.content;
+          if(delta) content.value += delta;
+        } catch(ex) {
+          buffer += `data: ${incoming}`;
+        }
+      }
+    }
+  } else {
+    const data = await response.json();
+    content.value = data.choices[0].message.content;
+  }
+}
 </script>
 
 <template>
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://vuejs.org/" target="_blank">
-      <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-    </a>
+  <div class="container">
+    <div>
+      <label>输入：</label><input class="input" v-model="question" />
+      <button @click="update">提交</button>
+    </div>
+    <div class="output">
+      <div><label>Streaming</label><input type="checkbox" v-model="stream"/></div>
+      <div>{{ content }}</div>
+    </div>
   </div>
-  <HelloWorld msg="Vite + Vue" />
 </template>
 
 <style scoped>
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  justify-content: start;
+  height: 100vh;
+  font-size: .85rem;
 }
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+.input {
+  width: 200px;
 }
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
+.output {
+  margin-top: 10px;
+  min-height: 300px;
+  width: 100%;
+  text-align: left;
+}
+button {
+  padding: 0 10px;
+  margin-left: 6px;
 }
 </style>
