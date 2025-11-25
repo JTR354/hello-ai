@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>host</title>
+  </head>
+  <body>
+    <div id="root">host</div>
+    <script>
+      const ifr = document.createElement('iframe');
+      ifr.onload = () => {
+        ifr.contentWindow.__MFE__ = {
+          init: (win) => {
+            console.log('init', eval('window === win'));
+            // app.mount('#root');
+            const element = win.document.createElement('div');
+            element.id = 'root';
+            element.textContent = 'hello iframe';
+            win.document.body.appendChild(element);
+            // win.document.body.innerHTML = 'hello iframe';
+            // console.log(win.document)
+            // 定义一个函数来代理document上的所有增删改查操作
+            function proxyDocument(doc, mainDoc) {
+              console.log('开始代理document上的所有增删改查操作');
+              
+              // 需要代理的DOM操作方法列表
+              const methodsToProxy = [
+                // 查询方法
+                'getElementById', 'getElementsByClassName', 'getElementsByTagName', 
+                'querySelector', 'querySelectorAll', 'getElementByName',
+                
+                // 创建方法
+                'createElement', 'createTextNode', 'createComment', 'createDocumentFragment',
+                'createEvent', 'createAttribute',
+                
+                // 修改方法
+                'write', 'writeln', 'close', 'open',
+                
+                // 属性操作
+                'hasFocus', 'execCommand',
+                
+                // 其他常用方法
+                'addEventListener', 'removeEventListener', 'dispatchEvent'
+              ];
+              
+              // 保存原始方法的引用
+              const originalMethods = {};
+              
+              // 为每个方法创建代理
+              methodsToProxy.forEach(methodName => {
+                if (typeof doc[methodName] === 'function') {
+                  // 保存原始方法
+                  originalMethods[methodName] = doc[methodName];
+                  
+                  try {
+                    // 尝试使用Object.defineProperty代理方法
+                    Object.defineProperty(doc, methodName, {
+                      value: function(...args) {
+                        console.log(`document.${methodName} 被调用，参数:`, args);
+                        
+                        // 对于查询方法，优先在主文档中查找
+                        if (['getElementById', 'querySelector'].includes(methodName)) {
+                          try {
+                            const result = mainDoc[methodName].apply(mainDoc, args);
+                            if (result) {
+                              console.log(`在主文档中找到结果:`, result);
+                              return result;
+                            }
+                          } catch (e) {
+                            console.warn(`在主文档中查询失败:`, e);
+                          }
+                        }
+                        
+                        // 正常调用原始方法
+                        const result = originalMethods[methodName].apply(this, args);
+                        console.log(`document.${methodName} 返回结果:`, result);
+                        return result;
+                      },
+                      configurable: true,
+                      writable: true
+                    });
+                    console.log(`成功代理 ${methodName} 方法`);
+                  } catch (e) {
+                    console.warn(`无法使用Object.defineProperty代理 ${methodName} 方法:`, e);
+                    
+                    // 降级方案：直接覆盖方法（可能在严格模式下失败）
+                    try {
+                      const original = doc[methodName];
+                      doc[methodName] = function(...args) {
+                        console.log(`document.${methodName} 被调用(降级方案)，参数:`, args);
+                        
+                        // 同样的查询逻辑
+                        if (['getElementById', 'querySelector'].includes(methodName)) {
+                          try {
+                            const result = mainDoc[methodName].apply(mainDoc, args);
+                            if (result) {
+                              console.log(`在主文档中找到结果:`, result);
+                              return result;
+                            }
+                          } catch (e) {
+                            console.warn(`在主文档中查询失败:`, e);
+                          }
+                        }
+                        
+                        return original.apply(this, args);
+                      };
+                    } catch (fallbackError) {
+                      console.error(`降级方案也失败了，无法代理 ${methodName}:`, fallbackError);
+                    }
+                  }
+                }
+              });
+              
+              // 代理常用属性
+              const propertiesToProxy = ['title', 'body', 'head', 'cookie', 'URL', 'domain'];
+              propertiesToProxy.forEach(prop => {
+                try {
+                  // 尝试定义访问器属性
+                  let currentValue = doc[prop];
+                  Object.defineProperty(doc, prop, {
+                    get() {
+                      console.log(`访问 document.${prop} 属性`);
+                      // 对于body和head，返回原始对象但也记录访问
+                      if (['body', 'head'].includes(prop)) {
+                        return doc[prop];
+                      }
+                      return currentValue;
+                    },
+                    set(value) {
+                      console.log(`设置 document.${prop} =`, value);
+                      // 对于title，同时更新主文档
+                      if (prop === 'title') {
+                        try {
+                          mainDoc.title = value;
+                          console.log('主文档标题已同步更新');
+                        } catch (e) {
+                          console.warn('无法更新主文档标题:', e);
+                        }
+                      }
+                      currentValue = value;
+                    },
+                    configurable: true
+                  });
+                  console.log(`成功代理 ${prop} 属性`);
+                } catch (e) {
+                  console.warn(`无法代理 ${prop} 属性:`, e);
+                }
+              });
+              
+              // 添加代理标记
+              try {
+                Object.defineProperty(doc, '_isFullyProxied', {
+                  value: true,
+                  configurable: true
+                });
+                console.log('document代理标记已添加');
+              } catch (e) {
+                console.warn('无法添加代理标记:', e);
+              }
+              
+              // 返回被代理后的document对象和原始方法引用
+              return {
+                proxiedDocument: doc,
+                originalMethods
+              };
+            }
+            
+            // 调用代理函数，传入iframe的document和主文档
+            const { proxiedDocument, originalMethods } = proxyDocument(win.document, document);
+            console.log('document代理完成');
+          },
+          getDOM: (dom) => {
+            try {
+              console.log('===== getDOM方法开始测试代理功能 =====');
+              console.log('使用的document对象:', dom);
+              
+              // 检查document对象是否已被全面代理
+              console.log('document是否已全面代理:', dom._isFullyProxied);
+              
+              // 测试查询方法
+              console.log('\n----- 测试查询方法 -----');
+              const rootById = dom.getElementById('root');
+              console.log('通过getElementById获取的root节点内容:', rootById ? rootById.textContent : '未找到节点');
+              
+              const rootByQuery = dom.querySelector('#root');
+              console.log('通过querySelector获取的root节点内容:', rootByQuery ? rootByQuery.textContent : '未找到节点');
+              
+              // 测试属性访问
+              console.log('\n----- 测试属性访问 -----');
+              console.log('当前document title:', dom.title);
+              
+              // 测试修改操作
+              console.log('\n----- 测试修改操作 -----');
+              try {
+                const newDiv = dom.createElement('div');
+                newDiv.id = 'test-proxy';
+                newDiv.textContent = '代理创建的元素';
+                dom.body.appendChild(newDiv);
+                console.log('成功创建并添加元素');
+                
+                // 验证创建的元素
+                const createdElement = dom.getElementById('test-proxy');
+                console.log('验证创建的元素:', createdElement ? createdElement.textContent : '未找到创建的元素');
+              } catch (e) {
+                console.error('创建元素时出错:', e);
+              }
+              
+              // 测试同时访问iframe document
+              console.log('\n----- 测试iframe document -----');
+              const iframeDoc = ifr.contentWindow.document;
+              const iframeRoot = iframeDoc.getElementById('root');
+              console.log('从iframe document获取的root节点:', iframeRoot ? iframeRoot.textContent : '未找到节点');
+              
+              console.log('===== getDOM方法测试完成 =====');
+              
+            } catch (e) {
+              console.error('getDOM方法执行出错:', e);
+            }
+          }
+        }
+        ifr.contentWindow.__MFE__.init(ifr.contentWindow);
+        ifr.contentWindow.__MFE__.getDOM(ifr.contentDocument);
+      }
+      document.body.appendChild(ifr);
+    </script>
+    <!-- <script type="module" src="/src/main.tsx"></script> -->
+  </body>
+</html>
